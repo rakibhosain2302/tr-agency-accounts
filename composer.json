@@ -1,0 +1,50 @@
+{
+    "name": "nit/agrani-accounts",
+    "type": "library",
+    "description": "Reusable double-entry accounting for Laravel ERP applications on nit/master: financial years, periods, account types and groups, chart of accounts, journals with posting and reversal.",
+    "keywords": [
+        "laravel",
+        "erp",
+        "accounting",
+        "double-entry"
+    ],
+    "license": "MIT",
+    "require": {
+        "php": "^8.3",
+        "brick/math": "^0.14.2 || ^0.15 || ^0.16 || ^0.17 || ^0.18 || ^0.19 || ^0.20 || ^1.0",
+        "laravel/framework": "^13.0",
+        "nit/master": "dev-master"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^11.0",
+        "phpunit/phpunit": "^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Nit\\AgraniAccounts\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Nit\\AgraniAccounts\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Nit\\AgraniAccounts\\AccountsServiceProvider"
+            ]
+        }
+    },
+    "repositories": {
+        "nit-master": {
+            "type": "path",
+            "url": "../nit-master"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
