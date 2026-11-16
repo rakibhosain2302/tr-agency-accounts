@@ -19,6 +19,7 @@ class FiscalYearResource extends JsonResource
             'name' => $this->name,
             'start_date' => $this->start_date->toDateString(),
             'end_date' => $this->end_date->toDateString(),
+            'monthly_periods' => $this->hasMonthlyPeriods(),
             'status' => $this->status,
             'closed_at' => $this->closed_at?->toIso8601String(),
             'periods' => PeriodResource::collection($this->whenLoaded('periods')),

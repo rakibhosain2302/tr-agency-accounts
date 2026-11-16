@@ -38,7 +38,10 @@ class FiscalYearController extends Controller
     #[Permission('acc_fiscal_year_manage', 'Create, close and reopen financial years')]
     public function update(FiscalYearRequest $request, FiscalYear $fiscalYear): FiscalYearResource
     {
-        return new FiscalYearResource($this->years->update($fiscalYear, $request->validated('name')));
+        $data = $request->validated();
+
+        return new FiscalYearResource($this->years->update($fiscalYear, $data['name'], $data['start_date'] ?? null, $data['end_date'] ?? null,
+            isset($data['monthly_periods']) ? $request->boolean('monthly_periods') : null));
     }
 
     #[Permission('acc_fiscal_year_manage', 'Create, close and reopen financial years')]

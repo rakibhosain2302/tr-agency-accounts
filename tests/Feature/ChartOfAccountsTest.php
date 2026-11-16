@@ -33,6 +33,42 @@ class ChartOfAccountsTest extends TestCase
         $this->chartService()->saveGroup(['parent_id' => $assets->id, 'account_type_id' => AccountType::query()->where('category', 'income')->value('id'), 'code' => '12', 'name' => 'Wrong category']);
     }
 
+    public function test_a_new_group_without_a_code_gets_the_next_four_digit_number(): void
+    {
+        $types = collect(['asset', 'expense'])
+            ->mapWithKeys(fn (string $category): array => [$category => AccountType::query()->create(['code' => $category, 'name' => ucfirst($category), 'category' => $category])->id]);
+        $save = fn (string $category, ?AccountGroup $parent = null, ?string $code = null): AccountGroup => $this->chartService()
+            ->saveGroup(['parent_id' => $parent?->id, 'account_type_id' => $types[$category], 'code' => $code, 'name' => 'Group']);
+
+        // One running number for every group, whatever its parent or category.
+        $assets = $save('asset');
+        $cash = $save('asset', $assets);
+        $this->assertSame(['0001', '0002', '0003', '0004'], [$assets->code, $cash->code, $save('expense')->code, $save('asset', $cash)->code]);
+
+        // A code typed in is kept; the numbers go on after the highest one.
+        $this->assertSame('0010', $save('asset', $assets, '0010')->code);
+        $this->assertSame('0011', $save('asset')->code);
+
+        // Editing keeps the code.
+        $this->assertSame('0002', $this->chartService()->saveGroup(['parent_id' => $assets->id, 'account_type_id' => $types['asset'], 'name' => 'Cash and bank'], $cash)->code);
+    }
+
+    public function test_a_new_account_without_a_code_gets_the_next_four_digit_number(): void
+    {
+        $type = AccountType::query()->create(['code' => 'asset', 'name' => 'Assets', 'category' => 'asset']);
+        $assets = $this->chartService()->saveGroup(['account_type_id' => $type->id, 'name' => 'Assets']);
+        $cash = $this->chartService()->saveGroup(['parent_id' => $assets->id, 'account_type_id' => $type->id, 'name' => 'Cash']);
+        $save = fn (AccountGroup $group, ?string $code = null): Account => $this->chartService()->saveAccount(['account_group_id' => $group->id, 'code' => $code, 'name' => 'Account']);
+
+        // Accounts count on their own, apart from the groups.
+        $this->assertSame(['0001', '0002', '0003'], [$save($cash)->code, $save($assets)->code, $save($cash)->code]);
+        $this->assertSame('5110', $save($assets, '5110')->code);
+        $kept = $save($cash);
+        $this->assertSame('5111', $kept->code);
+
+        $this->assertSame('5111', $this->chartService()->saveAccount(['account_group_id' => $assets->id, 'name' => 'Renamed'], $kept)->code);
+    }
+
     public function test_a_group_cannot_go_below_itself(): void
     {
         $this->chart();

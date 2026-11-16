@@ -19,7 +19,8 @@ class LedgerAccountRequest extends FormRequest
 
         return [
             'account_group_id' => ['required', 'integer', Rule::exists('acc_account_groups', 'id')],
-            'code' => ['required', 'string', 'max:30', Rule::unique('acc_accounts', 'code')->ignore($account)],
+            // Left out on a new account: ChartOfAccountsService::nextAccountCode gives it one.
+            'code' => [...($account !== null ? ['sometimes', 'required'] : ['nullable']), 'string', 'max:30', Rule::unique('acc_accounts', 'code')->ignore($account)],
             'name' => ['required', 'string', 'max:150'],
             'is_control' => ['nullable', 'boolean'],
             'control_kind' => ['nullable', Rule::in(['receivable', 'payable'])],

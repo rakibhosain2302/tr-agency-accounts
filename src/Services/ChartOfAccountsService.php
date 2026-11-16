@@ -14,6 +14,9 @@ use Nit\AgraniAccounts\Models\AccountType;
  */
 final class ChartOfAccountsService
 {
+    /** Digits of a group or account code made when none is given (0001, 0002 …). */
+    public const CODE_DIGITS = 4;
+
     /** @param  array<string, mixed>  $data */
     public function saveGroup(array $data, ?AccountGroup $group = null): AccountGroup
     {
@@ -39,11 +42,27 @@ final class ChartOfAccountsService
                 }
             }
 
+            if ($group === null && trim((string) ($data['code'] ?? '')) === '') {
+                $data['code'] = $this->nextGroupCode();
+            }
+
             $group ??= new AccountGroup;
             $group->fill($data)->save();
 
             return $group->refresh();
         });
+    }
+
+    /** The code a new group gets when none is given (see nextCode). */
+    public function nextGroupCode(): string
+    {
+        return $this->nextCode(AccountGroup::class);
+    }
+
+    /** The code a new account gets when none is given (see nextCode). */
+    public function nextAccountCode(): string
+    {
+        return $this->nextCode(Account::class);
     }
 
     public function deleteGroup(AccountGroup $group): void
@@ -65,10 +84,16 @@ final class ChartOfAccountsService
             }
         }
 
-        $account ??= new Account;
-        $account->fill($data)->save();
+        return DB::transaction(function () use ($data, $account): Account {
+            if ($account === null && trim((string) ($data['code'] ?? '')) === '') {
+                $data['code'] = $this->nextAccountCode();
+            }
 
-        return $account->refresh();
+            $account ??= new Account;
+            $account->fill($data)->save();
+
+            return $account->refresh();
+        });
     }
 
     public function deleteAccount(Account $account): void
@@ -78,6 +103,23 @@ final class ChartOfAccountsService
         }
 
         $account->delete();
+    }
+
+    /**
+     * One running number for every group (or every account), four digits (0001, 0002 …), whatever its
+     * parent or category; it goes on after the highest number in use.
+     *
+     * @param  class-string<AccountGroup|Account>  $model
+     */
+    private function nextCode(string $model): string
+    {
+        $codes = $model::query()->lockForUpdate()->pluck('code')->map(fn ($code): string => (string) $code);
+        $number = (int) $codes->filter(fn (string $code): bool => ctype_digit($code))->map(fn (string $code): int => (int) $code)->max() + 1;
+        while ($codes->contains(str_pad((string) $number, self::CODE_DIGITS, '0', STR_PAD_LEFT))) {
+            $number++;
+        }
+
+        return str_pad((string) $number, self::CODE_DIGITS, '0', STR_PAD_LEFT);
     }
 
     public function deleteType(AccountType $type): void

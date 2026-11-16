@@ -39,6 +39,14 @@ class FiscalYear extends Model
         return $this->hasMany(Period::class, 'fiscal_year_id')->orderBy('period_no');
     }
 
+    /** Whether the year was split into months (a year of one period carries the year's own name). */
+    public function hasMonthlyPeriods(): bool
+    {
+        $periods = $this->relationLoaded('periods') ? $this->periods : $this->periods()->get(['id', 'name']);
+
+        return $periods->count() > 1 || ($periods->count() === 1 && $periods->first()->name !== $this->name);
+    }
+
     public function isOpen(): bool
     {
         return $this->status === self::OPEN;

@@ -51,14 +51,20 @@ class ApiTest extends TestCase
             ->assertCreated()->assertJsonCount(12, 'data.periods')->json('data');
         $this->postJson(self::API.'/fiscal-years', ['name' => 'Overlap', 'start_date' => '2027-01-01', 'end_date' => '2027-12-31'], $headers)
             ->assertUnprocessable()->assertJsonPath('reason', 'invalid_fiscal_year');
+        $this->putJson(self::API.'/fiscal-years/'.$year['id'], ['name' => 'FY 2026', 'start_date' => '2026-01-01', 'end_date' => '2026-12-31', 'monthly_periods' => false], $headers)
+            ->assertOk()->assertJsonPath('data.start_date', '2026-01-01')->assertJsonPath('data.monthly_periods', false)->assertJsonCount(1, 'data.periods');
+        $year = $this->putJson(self::API.'/fiscal-years/'.$year['id'], ['name' => 'FY 2026-27', 'start_date' => '2026-07-01', 'end_date' => '2027-06-30', 'monthly_periods' => true], $headers)
+            ->assertOk()->assertJsonPath('data.monthly_periods', true)->assertJsonCount(12, 'data.periods')->json('data');
         $this->postJson(self::API.'/periods/'.$year['periods'][0]['id'].'/close', [], $headers)->assertOk()->assertJsonPath('data.status', 'closed');
 
         $type = $this->postJson(self::API.'/account-types', ['code' => 'current_asset', 'name' => 'Current asset', 'category' => 'asset'], $headers)
             ->assertCreated()->assertJsonPath('data.normal_balance', 'debit')->json('data');
         $group = $this->postJson(self::API.'/account-groups', ['account_type_id' => $type['id'], 'code' => '1', 'name' => 'Current assets'], $headers)->assertCreated()->json('data');
+        $this->postJson(self::API.'/account-groups', ['parent_id' => $group['id'], 'account_type_id' => $type['id'], 'name' => 'Cash and bank'], $headers)->assertCreated()->assertJsonPath('data.code', '0002');
         $this->postJson(self::API.'/accounts', ['account_group_id' => $group['id'], 'code' => '1010', 'name' => 'Cash', 'currency_code' => 'bdt'], $headers)
             ->assertCreated()->assertJsonPath('data.currency_code', 'BDT')->assertJsonPath('data.category', 'asset');
         $this->postJson(self::API.'/accounts', ['account_group_id' => $group['id'], 'code' => '1010', 'name' => 'Duplicate'], $headers)->assertUnprocessable()->assertJsonValidationErrors('code');
+        $this->postJson(self::API.'/accounts', ['account_group_id' => $group['id'], 'name' => 'Bank'], $headers)->assertCreated()->assertJsonPath('data.code', '1011');
 
         $this->getJson(self::API.'/account-groups?tree=1', $headers)->assertOk()
             ->assertJsonPath('data.0.code', '1')
