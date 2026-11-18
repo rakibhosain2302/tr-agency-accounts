@@ -83,7 +83,16 @@ class ReportApiTest extends TestCase
     public function test_pdf_export_uses_nit_masters_print_page(): void
     {
         $this->get(self::API.'balance-sheet?from=2026-07-01&to=2026-09-30&format=pdf', $this->bearer($this->superAdmin()))
-            ->assertOk()->assertSee('Balance sheet')->assertSee('Total assets')->assertSee('1000.00');
+            ->assertOk()->assertSee('Balance sheet')->assertSee('Total assets')
+            // Amounts with thousands separators, aligned right; the balance sheet on its day, with its check.
+            ->assertSee('<td class="rp-num ">1,000.00</td>', false)
+            ->assertSee(__('As of :date', ['date' => '30 Sep 2026']))
+            ->assertSee('class="rp-check', false)
+            ->assertDontSee('size: A4 landscape', false);
+
+        // The trial balance has many columns of amounts: it is printed across the page, kinds read as words.
+        $this->get(self::API.'trial-balance?from=2026-07-01&to=2026-09-30&format=pdf', $this->bearer($this->superAdmin()))
+            ->assertOk()->assertSee('size: A4 landscape', false)->assertSee('<td>Asset</td>', false);
     }
 
     public function test_a_user_reports_only_on_their_branches_even_when_asking_for_others(): void

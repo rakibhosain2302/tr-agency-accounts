@@ -109,6 +109,25 @@ class FinancialApiTest extends TestCase
             ->assertUnprocessable()->assertJsonPath('reason', 'invalid_allocation');
     }
 
+    public function test_incomes_are_searched_by_everything_their_list_shows(): void
+    {
+        $headers = $this->accountant();
+        $posted = $this->postJson(self::API.'/incomes', ['post' => true] + $this->creditSale('1250'), $headers)->assertCreated()->json('data');
+        $draft = $this->postJson(self::API.'/incomes', array_merge($this->creditSale('300'), ['transaction_date' => '2026-08-20', 'due_date' => '2026-09-15', 'narration' => 'Visa fee']), $headers)->assertCreated()->json('data');
+
+        $found = fn (string $term): array => array_column($this->getJson(self::API.'/incomes?q='.urlencode($term), $headers)->assertOk()->json('data'), 'transaction_no');
+
+        $this->assertSame([$posted['transaction_no']], $found($posted['transaction_no']));
+        $this->assertSame([$posted['transaction_no']], $found('1250'));
+        $this->assertSame([$posted['transaction_no']], $found('1,250'));
+        $this->assertSame([$draft['transaction_no']], $found('2026-08-20'));
+        $this->assertSame([$draft['transaction_no']], $found('2026-09-15'));
+        $this->assertSame([$draft['transaction_no']], $found('draft'));
+        $this->assertSame([$posted['transaction_no']], $found('posted'));
+        $this->assertSame([$draft['transaction_no']], $found('visa'));
+        $this->assertSame([], $found('nothing like this'));
+    }
+
     public function test_a_failed_allocation_rolls_back_the_whole_receipt(): void
     {
         $headers = $this->accountant();
@@ -192,6 +211,17 @@ class FinancialApiTest extends TestCase
         $this->postJson(self::API.'/incomes', ['post' => true, 'branch_id' => $this->branch->id, 'transaction_date' => '2026-08-01', 'cash_bank_account_id' => $bank['id'], 'payment_method' => 'bank_transfer', 'payment_reference' => 'TT-1', 'lines' => [['account_id' => $this->accounts['sales']->id, 'amount' => '10']]], $headers)->assertCreated();
         $this->deleteJson(self::API.'/cash-bank-accounts/'.$bank['id'], [], $headers)->assertUnprocessable();
         $this->getJson(self::API.'/payment-methods', $headers)->assertOk()->assertJsonPath('data.0.code', 'cash');
+    }
+
+    public function test_a_bank_statement_cannot_be_dated_in_the_future(): void
+    {
+        $this->travelTo('2026-11-17');
+        $headers = $this->accountant();
+
+        $this->postJson(self::API.'/reconciliations', ['cash_bank_account_id' => $this->cash->id, 'statement_date' => '2026-11-18', 'statement_balance' => '0'], $headers)
+            ->assertUnprocessable()->assertJsonValidationErrors('statement_date');
+        $this->postJson(self::API.'/reconciliations', ['cash_bank_account_id' => $this->cash->id, 'statement_date' => '2026-11-17', 'statement_balance' => '0'], $headers)
+            ->assertCreated();
     }
 
     public function test_reconciliation_over_the_api(): void

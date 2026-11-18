@@ -179,13 +179,20 @@ class FinancialReportsTest extends TestCase
         $this->assertSame(['Sales'], array_column($onlySales->sections[0]->rows, 'name'));
     }
 
-    public function test_income_and_expense_reports_by_account_and_month(): void
+    public function test_income_and_expense_reports_by_account_party_and_month(): void
     {
         $income = $this->reports()->income($this->filters());
         $expense = $this->reports()->expense($this->filters());
 
-        $this->assertSame('5400.00', $income->summary['total']);
-        $this->assertSame([['month' => '2026-08', 'amount' => '5400.00']], $income->sections[1]->rows);
+        $this->assertSame(['total' => '5400.00', 'average_per_month' => '5400.00', 'entries' => 2], $income->summary);
+        $this->assertSame([['code' => '4010', 'name' => 'Sales', 'amount' => '5400.00', 'share' => '100.0%']], $income->sections[0]->rows);
+        // The party of a line is that of the income that wrote it; the biggest first, each with its share.
+        $this->assertSame([
+            ['party' => '#501', 'entries' => 1, 'amount' => '5000.00', 'share' => '92.6%'],
+            ['party' => __('No party'), 'entries' => 1, 'amount' => '400.00', 'share' => '7.4%'],
+        ], $income->sections[1]->rows);
+        $this->assertSame(['party' => __('Total'), 'entries' => 2, 'amount' => '5400.00', 'share' => '100.0%'], $income->sections[1]->totals);
+        $this->assertSame([['month' => 'Aug 2026', 'amount' => '5400.00', 'share' => '100.0%']], $income->sections[2]->rows);
         $this->assertSame('1500.00', $expense->summary['total']);
     }
 

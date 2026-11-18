@@ -2,6 +2,7 @@
 
 namespace Nit\AgraniAccounts\Http\Controllers\Api;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -10,6 +11,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
+use Nit\AgraniAccounts\Contracts\PaymentMethodDirectory;
 use Nit\AgraniAccounts\Http\Requests\FinancialTransactionRequest;
 use Nit\AgraniAccounts\Http\Requests\ReverseJournalEntryRequest;
 use Nit\AgraniAccounts\Http\Resources\AllocationResource;
@@ -26,6 +28,15 @@ use Nit\Master\Support\Table;
  */
 abstract class TransactionController extends Controller
 {
+    /**
+     * Columns a search (?q=) looks in: everything the lists show (number, dates, amount, status, type) and the
+     * reference, narration and payment reference (cheque no., bKash TrxID …). It also finds the party by name
+     * (config accounts.parties), the cash / bank account by name or code, and the payment method by name.
+     *
+     * @var list<string>
+     */
+    public const SEARCHED = ['transaction_no', 'transaction_date', 'due_date', 'total_amount', 'status', 'transaction_type', 'payment_method', 'reference', 'narration', 'payment_reference'];
+
     public function __construct(protected FinancialTransactionService $transactions) {}
 
     abstract protected function type(): string;
@@ -51,7 +62,12 @@ abstract class TransactionController extends Controller
             ->when($request->query('from'), fn ($q, $from) => $q->whereDate('transaction_date', '>=', $from))
             ->when($request->query('to'), fn ($q, $to) => $q->whereDate('transaction_date', '<=', $to));
 
-        return FinancialTransactionResource::collection(Table::make($query, $request)->search(['transaction_no', 'reference', 'narration', 'payment_reference'])->sortable(['transaction_date', 'transaction_no', 'id'], '-id')->paginate(min(100, max(1, $request->integer('per_page', 25)))));
+        $term = trim((string) $request->query('q', ''));
+        if ($term !== '') {
+            $this->search($query, $term);
+        }
+
+        return FinancialTransactionResource::collection(Table::make($query, $request)->sortable(['transaction_date', 'transaction_no', 'id'], '-id')->paginate(min(100, max(1, $request->integer('per_page', 25)))));
     }
 
     public function show(int $transaction): FinancialTransactionResource
@@ -142,6 +158,40 @@ abstract class TransactionController extends Controller
     }
 
     /** The income / expense a receipt / payment settles (also limited to the user's branches). */
+    /**
+     * Keeps the transactions that have the words (?q=) in a column of SEARCHED, in the name of their party,
+     * cash / bank account or payment method. An amount may be written with thousands commas ("15,000").
+     *
+     * @param  Builder<FinancialTransaction>  $query
+     */
+    protected function search(Builder $query, string $term): void
+    {
+        $term = mb_substr($term, 0, 100);
+        $like = fn (string $text): string => '%'.addcslashes($text, '%_\\').'%';
+        $amount = preg_match('/^[\d,]+(\.\d+)?$/', $term) === 1 ? str_replace(',', '', $term) : null;
+        $methods = collect(app(PaymentMethodDirectory::class)->all())
+            ->filter(fn (array $method, string $code): bool => mb_stripos($method['name'], $term) !== false || mb_stripos($code, $term) !== false)
+            ->keys()->all();
+        $parties = config('accounts.parties.table');
+        $partyName = config('accounts.parties.name_column', 'name');
+
+        $query->where(function (Builder $where) use ($term, $like, $amount, $methods, $parties, $partyName): void {
+            foreach (self::SEARCHED as $column) {
+                $where->orWhere($column, 'like', $like($term));
+            }
+            if ($amount !== null) {
+                $where->orWhere('total_amount', 'like', $like($amount));
+            }
+            $where->orWhereHas('cashBankAccount', fn (Builder $account) => $account->where('name', 'like', $like($term))->orWhere('code', 'like', $like($term)));
+            if ($methods !== []) {
+                $where->orWhereIn('payment_method', $methods);
+            }
+            if ($parties && $partyName) {
+                $where->orWhereIn('party_id', DB::table($parties)->select('id')->where($partyName, 'like', $like($term)));
+            }
+        });
+    }
+
     protected function findTarget(int $id): FinancialTransaction
     {
         return FinancialTransaction::query()->findOrFail($id);

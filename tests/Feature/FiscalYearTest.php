@@ -2,6 +2,8 @@
 
 namespace Nit\AgraniAccounts\Tests\Feature;
 
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Nit\AgraniAccounts\Exceptions\AccountingException;
 use Nit\AgraniAccounts\Models\FiscalYear;
 use Nit\AgraniAccounts\Models\Period;
@@ -129,5 +131,23 @@ class FiscalYearTest extends TestCase
         $this->years()->close($empty);
         $this->expectException(AccountingException::class);
         $this->years()->update($empty, 'FY 2028', '2028-02-01', '2028-12-31');
+    }
+
+    public function test_periods_left_behind_by_a_deleted_year_are_not_posted_into(): void
+    {
+        $branch = $this->branch('Dhaka');
+        $chart = $this->chart();
+        // A closed year deleted outside the app (foreign keys off) leaves its periods behind.
+        $gone = $this->fiscalYear('Old', '2026-07-01', '2027-06-30');
+        $this->years()->close($gone);
+        Schema::disableForeignKeyConstraints();
+        DB::table('acc_fiscal_years')->where('id', $gone->id)->delete();
+        Schema::enableForeignKeyConstraints();
+        $this->fiscalYear('FY 2026-27', '2026-07-01', '2027-06-30');
+
+        $entry = app(JournalService::class)->record($this->saleData($branch, chart: $chart));
+
+        $this->assertSame('FY 2026-27', $entry->fiscalYear->name);
+        $this->assertSame('Aug 2026', $entry->period->name);
     }
 }

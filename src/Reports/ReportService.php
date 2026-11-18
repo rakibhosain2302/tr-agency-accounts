@@ -3,6 +3,7 @@
 namespace Nit\AgraniAccounts\Reports;
 
 use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -385,28 +386,53 @@ final class ReportService
         return ['rows' => $out, 'total' => $this->money($total)];
     }
 
+    /**
+     * Income or expenses of the period: by account, by party and by month, each row with its share of the
+     * total. A line's party is its own, else the party of the income / expense (or receipt / payment) that
+     * wrote its journal, so cash sales to a candidate count for that candidate.
+     */
     private function profitCategoryReport(ReportFilters $filters, string $category, string $key, string $title): Report
     {
         $report = new Report($key, $title, $filters->toArray());
         $sign = $category === 'income' ? 'l.credit - l.debit' : 'l.debit - l.credit';
+        $party = 'COALESCE(l.party_id, (SELECT ft.party_id FROM acc_transactions ft WHERE ft.journal_entry_id = e.id OR ft.reversal_journal_entry_id = e.id ORDER BY ft.id LIMIT 1))';
         $base = fn () => $this->lines($filters)
             ->whereBetween('e.entry_date', [$filters->from, $filters->to])
             ->where('t.category', $category)
             ->when($filters->accountIds !== [], fn (Builder $q) => $q->whereIn('l.account_id', $filters->accountIds));
 
         $byAccount = $base()->groupBy('a.id', 'a.code', 'a.name')->orderBy('a.code')->selectRaw("a.code, a.name, SUM({$sign}) AS amount")->get();
+        $byParty = $base()->groupByRaw($party)->selectRaw("{$party} AS party_id, SUM({$sign}) AS amount, COUNT(DISTINCT e.id) AS entries")->get()
+            ->sortByDesc(fn (object $row): float => (float) $row->amount)->values();
         $byMonth = $base()->groupByRaw('SUBSTR(e.entry_date, 1, 7)')->orderByRaw('SUBSTR(e.entry_date, 1, 7)')->selectRaw("SUBSTR(e.entry_date, 1, 7) AS month, SUM({$sign}) AS amount")->get();
+        $entries = (int) $base()->distinct()->count('e.id');
 
         $total = $byAccount->reduce(fn (BigDecimal $sum, object $row): BigDecimal => $sum->plus((string) $row->amount), BigDecimal::zero());
+        $share = fn ($amount): string => $total->isZero() ? '—' : (string) BigDecimal::of((string) $amount)->multipliedBy(100)->dividedBy($total, 1, self::halfUp()).'%';
+        $names = $this->partyNames($byParty->pluck('party_id')->filter()->all());
 
-        $report->section(new ReportSection(__('By account'), ['code' => __('Code'), 'name' => __('Account'), 'amount' => __('Amount')],
-            $byAccount->map(fn (object $row): array => ['code' => $row->code, 'name' => $row->name, 'amount' => $this->money($row->amount)])->all(),
-            ['code' => '', 'name' => __('Total'), 'amount' => $this->money($total)]));
-        $report->section(new ReportSection(__('By month'), ['month' => __('Month'), 'amount' => __('Amount')],
-            $byMonth->map(fn (object $row): array => ['month' => $row->month, 'amount' => $this->money($row->amount)])->all(),
-            ['month' => __('Total'), 'amount' => $this->money($total)]));
+        $report->section(new ReportSection(__('By account'), ['code' => __('Code'), 'name' => __('Account'), 'amount' => __('Amount'), 'share' => __('Share')],
+            $byAccount->map(fn (object $row): array => ['code' => $row->code, 'name' => $row->name, 'amount' => $this->money($row->amount), 'share' => $share($row->amount)])->all(),
+            ['code' => '', 'name' => __('Total'), 'amount' => $this->money($total), 'share' => $total->isZero() ? '' : '100.0%']));
+        $report->section(new ReportSection(__('By party'), ['party' => __('Party'), 'entries' => __('Entries'), 'amount' => __('Amount'), 'share' => __('Share')],
+            $byParty->map(fn (object $row): array => [
+                'party' => $row->party_id === null ? __('No party') : ($names[(int) $row->party_id] ?? '#'.$row->party_id),
+                'entries' => (int) $row->entries,
+                'amount' => $this->money($row->amount),
+                'share' => $share($row->amount),
+            ])->all(),
+            ['party' => __('Total'), 'entries' => $entries, 'amount' => $this->money($total), 'share' => $total->isZero() ? '' : '100.0%']));
+        $report->section(new ReportSection(__('By month'), ['month' => __('Month'), 'amount' => __('Amount'), 'share' => __('Share')],
+            $byMonth->map(fn (object $row): array => ['month' => Carbon::createFromFormat('!Y-m', $row->month)->format('M Y'), 'amount' => $this->money($row->amount), 'share' => $share($row->amount)])->all(),
+            ['month' => __('Total'), 'amount' => $this->money($total), 'share' => $total->isZero() ? '' : '100.0%']));
 
-        return $report->summarize(['total' => $this->money($total)]);
+        $months = max(1, $byMonth->count());
+
+        return $report->summarize([
+            'total' => $this->money($total),
+            'average_per_month' => (string) $total->dividedBy($months, 2, self::halfUp()),
+            'entries' => $entries,
+        ]);
     }
 
     private function partyReport(ReportFilters $filters, string $kind, string $key, string $title): Report
@@ -547,6 +573,12 @@ final class ReportService
     private function ledgerColumns(): array
     {
         return ['date' => __('Date'), 'entry_no' => __('Journal'), 'narration' => __('Narration'), 'debit' => __('Debit'), 'credit' => __('Credit'), 'balance' => __('Balance')];
+    }
+
+    /** Rounding half up, named HalfUp in brick/math 0.13+ and HALF_UP before (as Support\\Decimal does). */
+    private static function halfUp(): RoundingMode
+    {
+        return constant(RoundingMode::class.'::'.(defined(RoundingMode::class.'::HalfUp') ? 'HalfUp' : 'HALF_UP'));
     }
 
     private function money(BigDecimal|string|int|float|null $value): string

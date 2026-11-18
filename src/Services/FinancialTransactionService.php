@@ -97,7 +97,7 @@ final class FinancialTransactionService
             $transaction = $this->lockedDraft($transaction)->load(['lines.account.group.type', 'cashBankAccount.account', 'counterAccount']);
             $this->validateForPosting($transaction);
 
-            $period = Period::query()->with('fiscalYear')->containing($transaction->transaction_date)->first();
+            $period = Period::query()->with('fiscalYear')->whereHas('fiscalYear')->containing($transaction->transaction_date)->first();
             if ($period === null || ! $period->isOpen() || ! $period->fiscalYear->isOpen()) {
                 throw AccountingException::noOpenPeriod($transaction->transaction_date->toDateString());
             }

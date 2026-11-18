@@ -2,6 +2,7 @@
 
 namespace Nit\AgraniAccounts\Http\Controllers\Api;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -14,6 +15,7 @@ use Nit\AgraniAccounts\Http\Requests\JournalEntryRequest;
 use Nit\AgraniAccounts\Http\Requests\ReverseJournalEntryRequest;
 use Nit\AgraniAccounts\Http\Resources\JournalEntryResource;
 use Nit\AgraniAccounts\Models\JournalEntry;
+use Nit\AgraniAccounts\Models\JournalLine;
 use Nit\AgraniAccounts\Services\JournalService;
 use Nit\Master\Attributes\Permission;
 use Nit\Master\Support\Table;
@@ -43,7 +45,13 @@ class JournalEntryController extends Controller
             ->when($request->query('source_type'), fn ($q, $type) => $q->where('source_type', $type))
             ->when($request->integer('source_id'), fn ($q, $id) => $q->where('source_id', $id));
 
-        return JournalEntryResource::collection(Table::make($query, $request)->search(['entry_no', 'reference', 'narration'])->sortable(['entry_date', 'entry_no', 'id'], '-id')->paginate(min(100, max(1, $request->integer('per_page', 25)))));
+        $term = trim((string) $request->query('q', ''));
+        if ($term !== '') {
+            $this->search($query, $term);
+        }
+
+        // With the lines, so each entry carries its total (total_debit = total_credit).
+        return JournalEntryResource::collection(Table::make($query->with('lines'), $request)->sortable(['entry_date', 'entry_no', 'id'], '-id')->paginate(min(100, max(1, $request->integer('per_page', 25)))));
     }
 
     #[Permission('acc_journal_view', 'View journal entries')]
@@ -96,5 +104,31 @@ class JournalEntryController extends Controller
         $reversal = $this->journals->reverse($journalEntry, $request->validated('reversal_date'), $request->validated('narration'));
 
         return (new JournalEntryResource($reversal->load('lines.account')))->response()->setStatusCode(201);
+    }
+
+    /**
+     * Columns a search (?q=) looks in: everything the list shows (number, date, type, status, reference,
+     * narration); the entry's total is found too, written with or without thousands commas ("15,000").
+     *
+     * @var list<string>
+     */
+    public const SEARCHED = ['entry_no', 'entry_date', 'entry_type', 'status', 'reference', 'narration'];
+
+    /** @param  Builder<JournalEntry>  $query */
+    protected function search(Builder $query, string $term): void
+    {
+        $term = mb_substr($term, 0, 100);
+        $like = fn (string $text): string => '%'.addcslashes($text, '%_\\').'%';
+        $amount = preg_match('/^[\d,]+(\.\d+)?$/', $term) === 1 ? str_replace(',', '', $term) : null;
+
+        $query->where(function (Builder $where) use ($term, $like, $amount): void {
+            foreach (self::SEARCHED as $column) {
+                $where->orWhere($column, 'like', $like($term));
+            }
+            if ($amount !== null) {
+                $where->orWhereIn('id', JournalLine::query()->select('journal_entry_id')->groupBy('journal_entry_id')
+                    ->havingRaw('CAST(SUM(debit) AS CHAR) LIKE ?', [$like($amount)]));
+            }
+        });
     }
 }

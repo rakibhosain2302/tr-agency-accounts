@@ -258,7 +258,8 @@ final class JournalService
 
     private function openPeriodFor(\DateTimeInterface $date): Period
     {
-        $period = Period::query()->with('fiscalYear')->containing($date)->lockForUpdate()->first();
+        // A period whose financial year is gone (deleted outside the app) is not one to post into.
+        $period = Period::query()->with('fiscalYear')->whereHas('fiscalYear')->containing($date)->lockForUpdate()->first();
 
         if ($period === null || ! $period->isOpen() || ! $period->fiscalYear->isOpen()) {
             throw AccountingException::noOpenPeriod($date->format('Y-m-d'));
